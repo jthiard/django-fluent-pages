@@ -22,6 +22,7 @@ class Migration(migrations.Migration):
             ],
             options={
                 'abstract': False,
+                'db_table': 'pagetype_fluentpage_abstractfluentpage',
                 'verbose_name': 'Page',
                 'verbose_name_plural': 'Pages',
                 'permissions': (('change_page_layout', 'Can change Page layout'),),

@@ -20,6 +20,7 @@ class Migration(migrations.Migration):
                 ('redirect_type', models.IntegerField(default=302, help_text="Use 'normal redirect' unless you want to transfer SEO ranking to the new page.", verbose_name='Redirect type', choices=[(302, 'Normal redirect'), (301, 'Permanent redirect (for SEO ranking)')])),
             ],
             options={
+                'db_table': 'pagetype_redirectnode_redirectnode',
                 'verbose_name': 'Redirect',
                 'verbose_name_plural': 'Redirects',
             },

@@ -22,6 +22,7 @@ class Migration(migrations.Migration):
                 ('content', models.TextField(verbose_name='Content', blank=True)),
             ],
             options={
+                'db_table': 'pagetype_flatpage_flatpage',
                 'verbose_name': 'Flat Page',
                 'verbose_name_plural': 'Flat Pages',
             },

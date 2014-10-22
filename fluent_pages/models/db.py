@@ -9,6 +9,7 @@ It defines the following classes:
 * PageLayout
   The layout of a page, which has regions and a template.
 """
+from django.apps import apps
 from django.utils.encoding import python_2_unicode_compatible
 from django.core.cache import cache
 from django.core.exceptions import ImproperlyConfigured
@@ -41,15 +42,20 @@ class URLNodeMetaClass(PolymorphicMPTTModelBase):
     """
 
     def __new__(mcs, name, bases, attrs):
-        new_class = super(URLNodeMetaClass, mcs).__new__(mcs, name, bases, attrs)
-
+        model_name = name.lower()
+        metabases = tuple([object]+[base.Meta for base in bases])
+        meta = attrs.get('Meta', type('Meta', metabases, {}))
+        if hasattr(meta, 'app_label'):
+            app_label = meta.app_label
+        else:
+            module_ = attrs.get('__module__')
+            app_config = apps.get_containing_app_config(module_)
+            app_label = app_config.label
         # Update the table name.
-        # Inspired by from Django-CMS, (c) , BSD licensed.
-        if name not in ['UrlNode', 'Page']:
-            meta = new_class._meta
-            if meta.db_table.startswith(meta.app_label + '_'):
-                model_name = meta.db_table[len(meta.app_label)+1:]
-                meta.db_table = "pagetype_{0}_{1}".format(meta.app_label, model_name)
+        if name not in ['UrlNode', 'Page'] and not hasattr(meta, 'db_table'):
+            meta.db_table = "pagetype_{0}_{1}".format(app_label, model_name)
+            attrs['Meta'] = meta
+        new_class = super(URLNodeMetaClass, mcs).__new__(mcs, name, bases, attrs)
 
         return new_class
 
