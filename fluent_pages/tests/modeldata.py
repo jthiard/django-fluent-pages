@@ -1,4 +1,5 @@
 import django
+from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.utils.encoding import force_text
 from fluent_pages.models import Page
@@ -14,6 +15,12 @@ class ModelDataTests(AppTestCase):
     """
     root_url = '/'
     subpage1_url = '/test_subpage1/'
+
+
+    def setUp(self):
+        # Need to make sure that django-parler's cache isn't reused,
+        # because the transaction is rolled back on each test method.
+        cache.clear()
 
 
     @classmethod
@@ -98,6 +105,24 @@ class ModelDataTests(AppTestCase):
         """
         self.assertIs(type(Page.objects.get_for_path('/').children.all()), UrlNodeQuerySet)  # This broke with some django-mptt 0.5.x versions
         self.assertEqual(Page.objects.get_for_path('/').children.in_navigation()[0].slug, 'level1')
+
+
+    def test_get_pages_of_type_qs(self):
+        """
+        Test the core of the app_reverse() code.
+        """
+        pages1 = Page.objects.published().non_polymorphic().instance_of(WebShopPage)
+
+        # This somehow breaks for django-mptt 0.6 for Django 1.4
+        # This is caused in django-mptt during the Python 3 port, which could be bisected to
+        # the commits 497e780a4aab7ddc38731e8d48ea62c45d09b228..34fce3eeaafcf666ab15d5adae9900e7daea4212
+        pages2 = pages1.only(
+            'parent', 'lft',  # add fields read by MPTT, otherwise .only() causes infinite loop in django-mptt 0.5.2
+            'id'              # for Django 1.3
+        )
+
+        self.assertEqual(len(pages1), 1)
+        self.assertEqual(len(pages2), 1)
 
 
     def test_move_root(self):

@@ -10,6 +10,7 @@ It defines the following classes:
   The layout of a page, which has regions and a template.
 """
 from django.apps import apps
+from django.template.defaultfilters import slugify
 from django.utils.encoding import python_2_unicode_compatible
 from django.core.cache import cache
 from django.core.exceptions import ImproperlyConfigured
@@ -26,8 +27,7 @@ from fluent_pages.models.managers import UrlNodeManager
 from fluent_pages import appsettings
 from fluent_utils.django_compat import transaction_atomic, AUTH_USER_MODEL
 from parler.utils.context import switch_language
-from future.utils import with_metaclass
-from six import itervalues, iterkeys
+from future.utils import with_metaclass, itervalues, iteritems
 
 
 def _get_current_site():
@@ -319,7 +319,8 @@ class UrlNode(with_metaclass(URLNodeMetaClass, PolymorphicMPTTModel, Translatabl
 
         # Find all translations that this object has,
         # both in the database, and unsaved local objects.
-        all_languages = set(self.get_available_languages()) | set(iterkeys(self._translations_cache))  # HACK!
+        # HACK: accessing _translations_cache, skipping <IsMissing> sentinel values.
+        all_languages = set(self.get_available_languages()) | set(k for k,v in iteritems(self._translations_cache) if v)  # HACK!
         parent_urls = dict(UrlNode_Translation.objects.filter(master=self.parent_id).values_list('language_code', '_cached_url'))
 
         for language_code in all_languages:
@@ -338,6 +339,10 @@ class UrlNode(with_metaclass(URLNodeMetaClass, PolymorphicMPTTModel, Translatabl
         Update the fields associated with the translation.
         This also rebuilds the decedent URLs when the slug changed.
         """
+        # Make sure there is a slug!
+        if not translation.slug and translation.title:
+            translation.slug = slugify(translation.title)
+
         # Store this object
         self._make_slug_unique(translation)
         self._update_cached_url(translation)
@@ -435,9 +440,17 @@ class UrlNode(with_metaclass(URLNodeMetaClass, PolymorphicMPTTModel, Translatabl
         cached_page_urls = {
             self.id: translation._cached_url.rstrip('/') + '/'  # ensure slash, even with is_file
         }
-        fallback_page_urls = {
-            self.id: self.safe_translation_getter('_cached_url', language_code=fallback_language).rstrip('/') + '/'
-        }
+        fallback_url = self.safe_translation_getter('_cached_url', language_code=fallback_language)
+        if not fallback_url:
+            # Page only has a slug for the current language.
+            # Can't generate any URLs for sub objects, if they need a fallback language.
+            fallback_page_urls = {
+                self.id: None,
+            }
+        else:
+            fallback_page_urls = {
+                self.id: fallback_url.rstrip('/') + '/'
+            }
 
         # Update all sub objects.
         # even if can_have_children is false, ensure a consistent state for the URL structure
@@ -462,14 +475,22 @@ class UrlNode(with_metaclass(URLNodeMetaClass, PolymorphicMPTTModel, Translatabl
             else:
                 # Always construct the fallback URL, to revert to it when needed.
                 fallback_base = fallback_page_urls[subobject.parent_id]
-                fallback_page_urls[subobject.id] = u'{0}{1}/'.format(fallback_base, subobject.slug)
+                if fallback_base is None:
+                    # no base, no URL for sub object. (be explicit here, to detect KeyError)
+                    fallback_page_urls[subobject.id] = None
+                else:
+                    fallback_page_urls[subobject.id] = u'{0}{1}/'.format(fallback_base, subobject.slug)
 
                 if use_fallback_base:
                     base = fallback_base
                 else:
                     base = cached_page_urls[subobject.parent_id]
 
-                subobject._cached_url = u'{0}{1}/'.format(base, subobject.slug)
+                if base is None:
+                    #  no base, no URL for sub object. (be explicit here, to detect KeyError)
+                    subobject._cached_url = None
+                else:
+                    subobject._cached_url = u'{0}{1}/'.format(base, subobject.slug)
 
             if not use_fallback_base:
                 cached_page_urls[subobject.id] = subobject._cached_url
@@ -535,7 +556,8 @@ class UrlNode_Translation(TranslatedFieldsModel):
 
     def save(self, *args, **kwargs):
         if not self.title and not self.slug:
-            # If this object gets marked as dirty somehow, avoid corruption of the page tree.
+            # If this empty object gets marked as dirty somehow, avoid corruption of the page tree.
+            # The real checks for slug happen in save_translation(), this is only to catch internal state errors.
             raise RuntimeError("An UrlNode_Transaction object was created without slug or title, blocking save.")
         super(UrlNode_Translation, self).save(*args, **kwargs)
         self._original_cached_url = self._cached_url
@@ -569,14 +591,6 @@ class UrlNode_Translation(TranslatedFieldsModel):
             self.master_id, self.language_code, fallback_language
         ))
 
-
-
-class TranslationDoesNotExist(UrlNode_Translation.DoesNotExist):
-    """
-    The operation can't be completed, because a translation is missing.
-    """
-
-UrlNode_Translation.DoesNotExist = TranslationDoesNotExist
 
 
 @python_2_unicode_compatible
